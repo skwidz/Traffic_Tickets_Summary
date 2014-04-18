@@ -1,0 +1,21 @@
+OTS_TICKETS---------------------------------
+- A perl script to grab data from traffic tickets
+- inputted as text files, outputs data in CSV format. 
+-
+-USAGE: ots_tickets [OPTIONS] (fields|courts|summary) FILE FILE FILE...
+-
+-Modes---------------------
+- Fields	will grab and output as much data as possible and output appropriate headers followed by all found data for all given files 
+- 
+- Courts	Outputs a list of court dates and number of tickets scheduled for that day for all given files
+- 
+- Summary 	Outputs a per-file summary for all given files
+
+OPTIONS------------------------------
+
+-o FILE 	Redirects output to the specivied file.
+
+-v 		Enables verbose output which is sent to STDERR 
+
+-h 		Prints a usage message
+

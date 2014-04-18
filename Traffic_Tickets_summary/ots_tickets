@@ -1,0 +1,457 @@
+#!/usr/bin/perl
+
+#############
+#Christian Ellinger
+#ID: 1725912
+#for CMPT220AS40 Winter 2014 
+#Nick Bores 
+
+################
+use warnings;
+use strict; 
+use Getopt::Std; 
+use Switch;
+use Data::Dumper;
+use Date::Manip;
+use Tk;
+
+
+#declaring global variables
+my (%ticket_data,%court_data);
+my $ticket_ref = \%ticket_data;
+my $court_ref = \%court_data; 
+my $verbose;
+
+#declaring functions 
+sub get_data;
+
+#handeling opts
+my %opts; 
+getopts ("ho:v", \%opts);
+my ($mode, @files) = @ARGV; 
+my $usage = "Usage: ots_tickets [OPTIONS] (fields|courts|summary) FILE FILE FILE...";
+
+print "$usage\n\n" if defined $opts{h};
+#If -o option is set, output will be redirected to the defined file. 
+ if ( defined $opts{o}){
+ 	open(STDOUT, '>', "$opts{o}") or die "Cannot Redirect STDOUT: $!";
+ }
+ #enables verbose output which is printed to STDERR
+$verbose = 1 if defined $opts{v};
+
+#below are a bunch of regular expressions for extracting diffrent things 
+#they are in seperate functions so they can be called individually as needed
+#i attempted to have them stored in a hash to reduce length, but extraction didnt really work
+#ideally these would be in a seperate module for readability,
+#that wasnt covered in the course material so i didnt bother
+
+#Each of these take the ticket as a string and return what the regex finds as a string 
+#the names are pretty self explanitory 
+sub get_ticket_num($){
+	$_[0] =~ /TICKET #: (.*)PENALTY: .*/;
+	my $ticket = $1;
+	$ticket =~ s/\s*$//;
+	print STDERR "Found Ticket Number: $ticket\n" if ($verbose);
+	return $ticket;
+}
+
+sub get_name($){
+	$_[0] =~ /NAME: (.*)COURT DATE: .*/;
+	my $line = $1;
+	$line =~ s/\s*$//;
+	print STDERR "Found Name: $line\n" if ($verbose);
+	return $line;
+}
+
+sub get_court_date($){
+	$_[0] =~ /COURT DATE: (.*)/;
+	my $c_date = $1;
+	$c_date =~ s/\s*$//;
+	#changes the date from a letter format to a number format
+	$c_date = ParseDate($c_date);
+	#put date into required format
+	$c_date =~ /(\d{4})(\d{2})(\d{2})/;
+	$c_date = "$1-$2-$3";
+	print STDERR "Found Court Date: $c_date\n" if ($verbose);
+	return $c_date;	
+}
+
+sub get_speed_lim($){
+	$_[0] =~ /SPEED LIMIT: (\d*).*RECORDED SPEED/;
+	my $s_lim = $1;
+	$s_lim =~ s/\s*$//;
+	print STDERR "Found Speed Lim: $s_lim\n" if ($verbose);
+	return $s_lim;	
+}
+
+sub get_rec_speed($){
+	$_[0] =~ /RECORDED SPEED: (\d*).*/;
+	my $rec_speed = $1;
+	$rec_speed =~ s/\s*$//;
+	print STDERR "Found Redorded Speed: $rec_speed\n" if ($verbose);
+	return $rec_speed;	
+}
+
+sub get_plate_prov($){
+	$_[0] =~ /bearing (.*) licence plate number/;
+	my $plate_prov = $1;
+	print STDERR "Found Plate Province: $plate_prov\n" if ($verbose);
+	return $plate_prov;	
+}
+
+sub get_plate_num($){
+	$_[0] =~ /LICENCE #: (.*)/;
+	my $plate_num = $1;
+	$plate_num =~ s/\s*$//;
+	print STDERR "Found Plate Number: $plate_num\n" if ($verbose);
+	return $plate_num;	
+}
+
+
+sub get_penalty($){
+	$_[0] =~ /PENALTY: (.*)/;
+	my $penalty = $1;
+	$penalty =~ s/\s*$//;
+	print STDERR "Found Penalty: $penalty\n" if ($verbose);
+	return $penalty;	
+}
+
+sub get_ticket_date($){
+	$_[0] =~ /DATE\/TIME OF OFFENCE: (.*) \d\d:\d\d:\d\d.*LICENCE/;
+	my $date = $1;
+	$date =~ s/\s*$//;
+	#changes the date form a letter format to a number format
+	$date = ParseDate($date);
+	#match the date and put into specified format
+	$date =~ /(\d{4})(\d{2})(\d{2})/;
+	$date = "$1-$2-$3";
+	print STDERR "Found Ticket Date: $date\n" if ($verbose);
+	return $date;
+}
+
+sub get_ticket_time($){
+	$_[0] =~ /DATE\/TIME OF OFFENCE:.*(\d\d:\d\d:\d\d).*LICENCE/;
+	my $time = $1;
+	$time =~ s/\s*$//;
+	print STDERR "Found Ticket Time: $time\n" if ($verbose);
+	return $time;
+}
+
+sub get_city($){
+	my $name = get_name($_[0]);
+	$_[0] =~ /$name.*\n.*\n(.*),/;
+	my $city = $1;
+	$city =~ s/^\s*//;
+	print STDERR "Found City: $city\n" if ($verbose);
+	return $city;
+}
+
+sub get_prov($){
+	my $name = get_name($_[0]);
+	$_[0] =~ /$name.*\n.*\n.*, (\w\w)/;
+	my $prov = $1;
+	print STDERR "Found Province: $prov\n" if ($verbose);
+	return $prov;
+}
+
+sub get_postal_code($){
+	my $name = get_name($_[0]);
+	$_[0] =~ /$name.*\n.*\n.*(\w\d\w\s\d\w\d)/;
+	my $postal_code = $1;
+	print STDERR "Found Postal Code: $postal_code\n" if ($verbose);
+	return $postal_code;
+}
+
+sub get_address($){
+	my $name = get_name($_[0]);
+	$_[0] =~ /$name.*\n(.*)/;
+	my $address = $1;
+	$address =~ s/^\s*//;
+	print STDERR "Found address: $address\n" if ($verbose);
+	return $address;
+}
+
+sub get_officer($){
+	#pull everytihng on the line before "issuing officer"
+	$_[0] =~ /(.*)\nIssuing Officer/;
+	my $officer = $1;
+	#substitute the long whitespace strings for underscores 
+	#so they can be easily split in later functions
+	$officer =~ s/\s{2,}/_/g;  
+	return $officer;
+}
+
+sub get_officer_name($){
+	my $off_name = get_officer($_[0]);
+	#pick up the name, before the officer number
+	$off_name =~ /(.*)_.*_/;
+	$off_name = $1;
+	#remove the leading whitespace
+	$off_name =~ s/^\s*//;
+	print STDERR "Found Officer Name: $off_name\n" if ($verbose);
+	return $off_name;
+}
+
+sub get_officer_badge($){
+	#splitting form the get_officer finction
+	my $off_badge = get_officer($_[0]);
+	$off_badge =~ /_(.*)_/;
+	$off_badge = $1;
+	print STDERR "Found Officer Badge Number: $off_badge\n" if ($verbose);
+	return $off_badge;
+}
+
+sub get_officer_agency($){
+	#splitting from the get officer function
+	my $off_agency = get_officer($_[0]);
+	$off_agency =~ /_.*_(.*)/;
+	$off_agency = $1; 
+	print STDERR "Found Officer Agency: $off_agency\n" if ($verbose);
+	return $off_agency;
+}
+
+sub get_ticket_type($){
+	$_[0] =~ /the images taken by (.*)/;
+	my $t_type = $1;
+	#if the ticket type is not found, set it to N/A
+	unless($t_type){$t_type = "N/A"}
+	return $t_type;
+}
+
+#a sub to build the ticket data tree,. 
+#takes the ticket string, modifies a global variable and does not return anything
+sub get_data_fields($){
+	#the hash tree is nested in a way that data about each ticket can be easly found 
+	#the keys for the $ticket_ref hash are the ticket numbers 
+	#these keys hold refrences to nested hashes containing additional data about the tickets
+	print STDERR "Building Hash for ticket...\n" if ($verbose);
+	$ticket_ref->{get_ticket_num($_[0])}{details} = {date => get_ticket_date($_[0]),
+												     time => get_ticket_time($_[0]),
+												 	 speed_lim => get_speed_lim($_[0]),
+												 	 rec_speed => get_rec_speed($_[0])};
+	$ticket_ref->{get_ticket_num($_[0])}{owner} = {name => get_name($_[0]),
+												   address => get_address($_[0]),
+												   city => get_city($_[0]),
+												   prov => get_prov($_[0]),
+												   post_code => get_postal_code($_[0]) };
+	$ticket_ref->{get_ticket_num($_[0])}{licence_plate} = {prov => get_plate_prov($_[0]),
+														   number => get_plate_num($_[0])};												 	 
+	$ticket_ref->{get_ticket_num($_[0])}{officer} = {name => get_officer_name($_[0]),
+													 badge => get_officer_badge($_[0]),
+													 agency => get_officer_agency($_[0])};
+	$ticket_ref->{get_ticket_num($_[0])}{courtdate} = get_court_date($_[0]);
+	$ticket_ref->{get_ticket_num($_[0])}{penalty} = get_penalty($_[0]);
+	$ticket_ref->{get_ticket_num($_[0])}{type} = get_ticket_type($_[0]);
+	print STDERR "Hash fields have been filled for Ticket\n" if ($verbose);	
+}
+#Sub to build the hash tree for court mode, takes a ticket string, does not return
+sub get_data_court($){
+	#checks if the date exsists in the hash , if it is increment the number asociated with it
+	if ($ticket_ref->{get_court_date($_[0])}){
+		$ticket_ref->{get_court_date($_[0])} ++;
+		print STDERR "Court Date found in hash, Incrementing..\n" if ($verbose);
+	#else set the counter to one
+	}else {
+		$ticket_ref-> {get_court_date($_[0])} = 1;
+		print STDERR "Court Date not Found in hash, adding to hash\n" if ($verbose);
+	}
+}
+
+#builds a hash tree for the summary mode
+#takes the name of the file, and the ticket as a string (in that order)
+#doesn not return
+sub get_data_summary($$){
+	my ($name, $file) = @_;
+	print STDERR "Filename:$name\n" if ($verbose);
+	my $speed_diff = (get_rec_speed($file) - get_speed_lim($file));
+	print STDERR "Speed Difference: $speed_diff\n" if ($verbose);
+	#foreach of min and max speed, if they exsist and are less or more respectivly, set them to the current value
+	#if they dont exisit, asign a current value to them. 
+	if ($ticket_ref->{$name}{early}){
+		if(get_court_date($file) lt $ticket_ref->{$name}{early} ){
+			$ticket_ref->{$name}{early} = get_court_date($file);
+			print STDERR "Earlier Court Date found,Replacing\n" if ($verbose);
+		}
+	} else {
+		$ticket_ref->{$name}{early} = get_court_date($file);
+		print STDERR "No Early Court Date found in hash, Adding to hash\n" if ($verbose);
+	}
+	if ($ticket_ref->{$name}{late}){
+		if(get_court_date($file) gt $ticket_ref->{$name}{late}){
+			$ticket_ref->{$name}{late} = get_court_date($file);
+			print STDERR "Later court date found, Replacing\n" if ($verbose);
+		}
+	} else {
+		$ticket_ref->{$name}{late} = get_court_date($file);
+		print STDERR "No Late Court Date Found in Hash, Adding to Hash\n" if ($verbose);
+	}
+	if ($ticket_ref->{$name}{min}){
+		if($ticket_ref->{$name}{min} > $speed_diff){
+			$ticket_ref->{$name}{min} = $speed_diff;
+			print STDERR "Lower Speed Difference Found, Replacing\n" if ($verbose);
+		}
+	} else {
+		$ticket_ref->{$name}{min} = $speed_diff;
+		print STDERR "No Min Speed Difference Found, Adding to hash\n" if ($verbose);
+	}
+	if ($ticket_ref->{$name}{max}){
+		if($ticket_ref->{$name}{max} < $speed_diff){
+			$ticket_ref->{$name}{max} = $speed_diff;
+			print STDERR "higher Speed Difference Found, Replacing\n" if ($verbose);
+		}
+	} else {
+		$ticket_ref->{$name}{max} = $speed_diff;
+		print STDERR "No Max Speed Difference Found, Adding to Hash\n" if ($verbose);
+	}
+
+
+}
+#A function that takes a filename and returns the text of the file as a string 
+sub open_file($){
+	local $/= undef;
+	open FILE, '<', "$_[0]"
+		or die "Cannot open your File: $_[0] $!\n";
+	my $text = <FILE>;
+	print STDERR "$_[0] Opened\n" if ($verbose);
+	close FILE;
+	return $text;
+}
+
+#takes a hash refrence and outputs CSV its CSV data
+#this is formatted for the fields mode
+sub fields_out(){
+	foreach my $tick_num (keys %$ticket_ref){
+		print "$tick_num,".
+		$ticket_ref->{$tick_num}{courtdate}.','.
+		$ticket_ref->{$tick_num}{owner}{name}.','.
+		$ticket_ref->{$tick_num}{owner}{address}.','.
+		$ticket_ref->{$tick_num}{owner}{city}.','.
+		$ticket_ref->{$tick_num}{owner}{prov}.','.
+		$ticket_ref->{$tick_num}{owner}{post_code}.','.
+		$ticket_ref->{$tick_num}{licence_plate}{number}.','.
+		$ticket_ref->{$tick_num}{licence_plate}{prov}.','.
+		$ticket_ref->{$tick_num}{details}{speed_lim}.','.
+		$ticket_ref->{$tick_num}{details}{rec_speed}.','.
+		$ticket_ref->{$tick_num}{details}{time}.','.
+		$ticket_ref->{$tick_num}{details}{date}.','.
+		$ticket_ref->{$tick_num}{type}.','.
+		$ticket_ref->{$tick_num}{penalty}.','.
+		$ticket_ref->{$tick_num}{officer}{name}.','.
+		$ticket_ref->{$tick_num}{officer}{badge}.','.
+		$ticket_ref->{$tick_num}{officer}{agency}."\n";
+	}
+}
+
+#outupts the dats for the court modd in CSV format
+sub court_out(){
+	foreach my $courtdate (keys %$ticket_ref){
+		print "$courtdate,".
+		$ticket_ref->{$courtdate}."\n";
+	}
+}
+
+#outputs the data for the fields mode in CSV format
+sub summary_out(){
+	foreach my $filename (keys %$ticket_ref){
+		print "$filename,".
+		$ticket_ref->{$filename}{early}.','.
+		$ticket_ref->{$filename}{late}.','.
+		$ticket_ref->{$filename}{min}.','.
+		$ticket_ref->{$filename}{max}."\n";
+	}
+}
+#prints headers for the court mode in CSV format 
+sub court_header(){
+	print "Court Date,Number of tickets on Date\n";
+}
+
+#prints headers for the fields mode in CSV format
+sub fields_header(){
+	print "Ticket Number,Court Date,Registered Owner Name,Registered Owner Address,Registered Owner City,".
+	  "Registered Owner Postal Code,License Plate Number,License Plate Province,Speed Limit,Recorded Speed,".
+	  "Ticket Time,Ticket Date,Ticket Type,Ticket Penalty,Officer Name,Officer Badge Number,Officer Agency\n";
+}
+
+#prints the headers for the summary mode in csv format 
+sub summary_header(){
+	print "File Name,Earliest Court Date,Latest Court Date,Lowest Recorded Speed Difference, Highest Recorded Speed Difference\n";
+}
+
+#sub that takes an array of Filehandles, opens them each as a string
+#it then splits the string for each ticket, then runs get_data_fields on each ticket. 
+#Takes: Array of filehandles
+#does not return
+sub get_data_files_fields(@){
+	foreach (@_){
+		my(@tickets,$text);
+		#open each file as a string in its entirety
+		$text = open_file($_);
+		#will split on the header for new tickets
+		@tickets = split(/\f.*NOTICE OF OFFENCE TO REGISTERED OWNER/,$text); 
+		foreach(@tickets){
+			get_data_fields($_); 	
+		} 
+	}
+}
+
+#same operation as get_data_files_fields, but for the courts mode 
+#takes an array of filehandles 
+sub get_data_files_court(@){
+	foreach (@_){
+		my(@tickets,$text);
+		#open each file as a string 
+		$text = open_file($_);
+		#will split on the header for new tickets
+		@tickets = split(/\f.*NOTICE OF OFFENCE TO REGISTERED OWNER/,$text); 
+		foreach(@tickets){
+			get_data_court($_); 	
+		} 
+	}
+}
+
+#same operation as get_data_files_fields, but for the summary mode 
+sub get_data_files_summary(@){
+	foreach (@_){ #foreach of the files
+		my($name,@tickets,$text);
+		$name = $_; #set $name to the name of the file so it can be passed
+		$text = open_file($_);
+		#will split header for new tickets
+		@tickets = split(/\f.*NOTICE OF OFFENCE TO REGISTERED OWNER/,$text); 
+		foreach(@tickets){
+			get_data_summary($name,$_);
+		}
+	}
+}
+
+#operations for the fields mode
+sub fields_mode(@){
+	#Iterate over all the input files
+	get_data_files_fields(@_);
+	fields_header();
+	fields_out();
+	#print Dumper($ticket_ref);
+}
+
+#runs operatoins for the court mode
+sub court_mode(@){
+	get_data_files_court(@_);
+	court_header();
+	court_out();		
+}
+
+#runs operations for the summary mode 
+sub summary_mode(@){
+	get_data_files_summary(@_);
+	summary_header();
+	summary_out();	
+}
+
+#a switch statement to pick modes.
+switch($mode){
+	case "fields" {fields_mode(@files)}
+	case "court" {court_mode(@files)}
+	case "summary" {summary_mode(@files)}
+	else {print"Could not find mode: $mode\n" and die}
+}
+
+
